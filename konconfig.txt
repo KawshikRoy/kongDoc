@@ -1,0 +1,327 @@
+cat <<EOF > docker-compose.yml
+
+volumes:
+  kong_db_data: {}  # Named volume to persist Postgres data across container restarts
+
+networks:
+  kong-ee-net:      # Custom bridge network for isolated Kong and Postgres communication
+    driver: bridge
+
+# Common environment variables used by Kong services (bootstrap and CP)
+x-kong-config: &kong-env
+  KONG_DATABASE: postgres             # Use Postgres as the backing database
+  KONG_PG_HOST: kong-ee-database      # Hostname of the Postgres service
+  KONG_PG_DATABASE: kong              # Name of the database to connect to
+  KONG_PG_USER: kong                  # Database username
+  KONG_PG_PASSWORD: kong              # Database password
+  KONG_LICENSE_DATA: "\${KONG_LICENSE_DATA}"  # Kong Enterprise license passed via environment variable
+
+services:
+
+  kong-ee-database:
+    container_name: kong-ee-database
+    image: postgres:latest           # Official Postgres image
+    restart: on-failure              # Restart if the container fails
+    volumes:
+      - kong_db_data:/var/lib/postgresql  # Mount the volume for persistent data
+    networks:
+      - kong-ee-net                  # Connect to the shared Kong network
+    environment:
+      POSTGRES_USER: kong            # Set DB user inside the container
+      POSTGRES_DB: kong              # Create this database on first run
+      POSTGRES_PASSWORD: kong        # Set the password for the DB user
+    healthcheck:                     # Ensure the DB is ready before starting dependent services
+      test: ["CMD", "pg_isready", "-U", "kong"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+    ports:
+      - '5432:5432'                  # Optional: expose Postgres on localhost for debugging
+
+  kong-bootstrap:
+    image: '${GW_IMAGE:-kong/kong-gateway:3.13.0.2}'  # Kong Gateway image (default to latest version)
+    container_name: kong-bootstrap
+    networks:
+      - kong-ee-net
+    depends_on:
+      kong-ee-database:
+        condition: service_healthy   # Wait until Postgres is up and healthy
+    restart: on-failure
+    environment:
+      <<: *kong-env                 # Reuse environment config from x-kong-config
+      KONG_PASSWORD: handyshake    # Admin GUI password (required for RBAC)
+    command: kong migrations bootstrap  # Run DB migrations to initialize Kong schema
+
+  kong-cp:
+    image: '${GW_IMAGE:-kong/kong-gateway:3.13.0.2}'  # Main Kong Gateway Control Plane (default to latest version)
+    container_name: kong-cp
+    restart: on-failure
+    networks:
+      - kong-ee-net
+    environment:
+      <<: *kong-env
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001, 0.0.0.0:8444 ssl  # Admin API on HTTP + HTTPS
+      KONG_ADMIN_GUI_LISTEN: 0.0.0.0:8002, 0.0.0.0:8445 ssl  # Kong Manager on HTTP + HTTPS
+      KONG_ADMIN_GUI_URL: http://${GW_HOST:-localhost}:8002  # URL for GUI links
+      KONG_PASSWORD: handyshake  # Required for logging in to Kong Manager (RBAC)
+    depends_on:
+      kong-bootstrap:
+        condition: service_completed_successfully  # Start only after bootstrap has succeeded
+    ports:
+      - "8000:8000"  # Proxy HTTP
+      - "8443:8443"  # Proxy HTTPS
+      - "8001:8001"  # Admin API HTTP
+      - "8444:8444"  # Admin API HTTPS
+      - "8002:8002"  # Kong Manager HTTP
+      - "8445:8445"  # Kong Manager HTTPS
+EOF
+
+
+https://medium.com/@pradeepgudipati/setting-up-kong-as-an-api-proxy-with-docker-compose-declarative-config-30bc8a82e16d
+https://dev.to/nasrulhazim/setup-kong-gateway-with-docker-4m6l
+https://developer.konghq.com/gateway/install/docker/
+https://developer.konghq.com/plugins/
+https://developer.konghq.com/gateway/configuration/
+https://docs.docker.com/engine/install/centos/
+https://hub.docker.com/_/kong
+https://developer.konghq.com/gateway/
+https://developer.konghq.com/gateway/get-started/
+https://developer.konghq.com/gateway/install/docker/
+https://developer.konghq.com/plugins/
+
+[root@localhost config]# cat kong.yml
+_format_version: "2.1"
+
+services:
+  - name: echo-server
+    url: http://192.168.80.128:8080
+    routes:
+      - name: echo
+        paths:
+          - /api/v1/way4
+        strip_path: false
+        preserve_host: false
+
+
+Explanation
+- _format_version: "3.0"
+Declares the schema version of the declarative config. "3.0" is the latest, recommended format.
+- services:
+Defines upstream services Kong will proxy traffic to.
+- Service: auth-backend
+- name: auth-backend → A label for this service inside Kong.
+- url: http://auth-backend-service:3000 → The actual backend target. This could be another container or host reachable from Kong.
+- Routes:
+Routes tell Kong how incoming requests should be matched and forwarded to the service.
+- auth-route
+- paths: /api/v1/auth → Any request path starting with /api/v1/auth will be proxied to auth-backend-service:3000.
+- strip_path: false → Kong will not remove /api/v1/auth from the request before forwarding.
+Example:
+Client: GET http://kong:8000/api/v1/auth/login
+Backend receives: /api/v1/auth/login
+- 
+
+
+version: "3.8"
+
+services:
+  kong:
+    image: kong:latest
+    container_name: kong
+    ports:
+      - "8000:8000"   # Proxy port
+      - "8443:8443"   # Proxy SSL port
+      - "8001:8001"   # Admin API port
+      - "8444:8444"   # Admin API SSL port
+    environment:
+      - KONG_DATABASE=off        # Use DB-less mode
+      - KONG_DECLARATIVE_CONFIG=/usr/local/kong/declarative/kong.yml
+    volumes:
+      - ./config:/usr/local/kong/declarative
+	  
+	  
+	  
+[root@localhost kong]# cat docker-compose.yml
+services:
+  kong:
+    image: kong:latest
+    container_name: kong
+    ports:
+      - "8000:8000"   # Proxy port
+      - "8443:8443"   # Proxy SSL port
+      - "8001:8001"   # Admin API port
+      - "8444:8444"   # Admin API SSL port
+    environment:
+      - KONG_DATABASE=off        # Use DB-less mode
+      - KONG_DECLARATIVE_CONFIG=/usr/local/kong/declarative/kong.yml
+    volumes:
+      - ./config:/usr/local/kong/declarative
+	  
+	  
+	  
+	  
+docker compose up -d
+docker compose down
+docker compose ps
+docker compose logs -f
+
+
+docker Setup
+https://docs.docker.com/engine/install/rhel/
+sudo dnf remove docker \
+                  docker-client \
+                  docker-client-latest \
+                  docker-common \
+                  docker-latest \
+                  docker-latest-logrotate \
+                  docker-logrotate \
+                  docker-engine \
+                  podman \
+                  runc
+				  
+sudo dnf -y install dnf-plugins-core
+sudo dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
+sudo dnf install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+sudo docker run hello-world
+
+
+[root@localhost ~]# curl -i -H "Origin: https://example.com" http://192.168.80.128:8000/api/v1/way4 -X POST
+HTTP/1.1 401
+Content-Length: 29
+Connection: keep-alive
+Date: Mon, 23 Mar 2026 06:29:41 GMT
+Server: kong/3.9.1
+vary: Origin
+Access-Control-Allow-Origin: https://example.com
+Access-Control-Expose-Headers: X-Custom-Header
+X-Kong-Upstream-Latency: 2
+X-Kong-Proxy-Latency: 0
+Via: 1.1 kong/3.9.1
+X-Kong-Request-Id: 2450cc1ca7ca2c356b7d6a13dc08a405
+
+Unauthorized: Invalid API Key[root@localhost ~]#
+[root@localhost ~]# curl -i -H "Origin: https://notallowed.com" http://192.168.80.128:8000/api/v1/way4 -X POST
+HTTP/1.1 401
+Content-Length: 29
+Connection: keep-alive
+Date: Mon, 23 Mar 2026 06:30:09 GMT
+Server: kong/3.9.1
+vary: Origin
+Access-Control-Expose-Headers: X-Custom-Header
+X-Kong-Upstream-Latency: 2
+X-Kong-Proxy-Latency: 0
+Via: 1.1 kong/3.9.1
+X-Kong-Request-Id: 14a4881dd3d2a93faa4a3a15b3fe5d72
+
+Unauthorized: Invalid API Key[root@localhost ~]#
+
+
+s
+[root@localhost kong]# vim ./config/kong.yml
+_format_version: "2.1"
+
+services:
+  - name: echo-server
+    url: http://192.168.80.128:8080
+    routes:
+      - name: echo
+        paths:
+          - /api/v1/way4
+        strip_path: false
+        preserve_host: false
+
+plugins:
+  - name: cors
+    config:
+      credentials: false
+      exposed_headers:
+       - X-Custom-Header
+      headers:
+       - Accept
+       - Content-Type
+       - Authorization
+      max_age: 3600
+      methods:
+       - GET
+       - POST
+       - PUT
+       - DELETE
+       - OPTIONS
+      origins:
+       - http://mockbin.com
+       - https://example.com
+      preflight_continue: false
+      private_network: false
+
+  - name: rate-limiting
+    config:
+      second: 5
+      hour: 10
+      policy: local
+
+  - name: ip-restriction
+    config:
+      allow:
+      - 192.168.80.1
+      - 192.168.89.1
+	  deny:
+      - 192.168.80.1
+      - 192.168.89.1
+	  status: 401
+	  message: Source is not allowed this service
+~
+
+
+
+_format_version: "3.0"
+_transform: true
+
+# Define the upstream (load balancer)
+upstreams:
+- name: my_upstream
+  algorithm: round-robin
+  slots: 100
+  healthchecks:
+    active:
+      type: http
+      http_path: /health
+      timeout: 1
+      concurrency: 10
+      healthy:
+        interval: 5
+        successes: 2
+      unhealthy:
+        interval: 5
+        http_failures: 3
+        tcp_failures: 3
+        timeouts: 3
+    passive:
+      type: http
+      healthy:
+        successes: 2
+      unhealthy:
+        http_failures: 3
+        tcp_failures: 3
+        timeouts: 3
+
+  targets:
+  - target: 10.0.0.1:8080
+    weight: 100
+  - target: 10.0.0.2:8080
+    weight: 50
+
+# Define the service that uses the upstream
+services:
+- name: my_service
+  host: my_upstream
+  protocol: http
+  port: 80
+  routes:
+  - name: my_route
+    paths:
+    - /api
+    strip_path: true
+    methods:
+    - GET
+    - POST
