@@ -1,0 +1,153 @@
+_format_version: "2.1"
+
+services:
+  - name: openway
+    url: http://192.168.80.128:8080
+    routes:
+      - name: echo
+        paths:
+          - /api/v2/way4
+        strip_path: false
+        preserve_host: false
+
+  - name: openway1
+#   url: http://192.168.80.128:8080
+    host: openway_upstream
+    routes:
+      - name: echo1
+        paths:
+          - /api/v1/way4
+        strip_path: false
+        preserve_host: false
+
+
+upstreams:
+  - name: openway_upstream
+    algorithm: round-robin
+    targets:
+      - target: 192.168.80.128:8080
+        weight: 100
+      - target: 192.168.80.128:8081
+        weight: 100
+
+consumers:
+ - username: user
+   acls:
+    - group: admin
+ 
+ - username: apiuser
+   acls:
+    - group: user
+
+
+keyauth_credentials:
+ - consumer: user
+   key: kawshik
+   
+
+basicauth_credentials:
+ - consumer: user
+   username: kawshik
+   password: mairebap
+   
+plugins:
+  - name: cors
+    config:
+      credentials: false
+      exposed_headers:
+       - X-Custom-Header
+      headers:
+       - Accept
+       - Content-Type
+       - Authorization
+      max_age: 3600
+      methods:
+       - GET
+       - POST
+       - PUT
+       - DELETE
+       - OPTIONS
+      origins:
+       - http://mockbin.com
+       - https://example.com
+      preflight_continue: false
+      private_network: false
+ 
+  - name: rate-limiting
+    config:
+      second: 5
+      hour: 10
+      policy: local
+  
+  - name: ip-restriction
+    config:
+      allow:
+      - 192.168.80.1
+      - 192.168.89.1
+      status: 400
+      message: Source is not allowed this service
+
+  - name: basic-auth
+    config:
+      anonymous: Client
+      hide_credentials: true
+  
+  - name: key-auth
+    config: 
+      key_names:
+       - apikey
+      key_in_body: false
+      key_in_header: true
+      key_in_query: true
+      hide_credentials: false
+      run_on_preflight: true
+    enabled: true
+
+  - name: acl
+    service: openway
+    config:
+      deny:
+       - admin
+      hide_groups_header: true
+    enabled: true
+  
+  - name: request-termination
+    config:
+      status_code: 403
+#     message: '"Your request has been terminated"'
+      body: '{"code": "403","message":"Your Request is not valid"}'
+      content_type: "application/json; charset=utf-8"
+      trigger: "CBBL"
+    enabled: true
+  
+  - name: request-size-limiting
+    service: openway1
+    config:
+      allowed_payload_size: 1
+      size_unit: kilobytes
+      require_content_length: false
+  - name: response-transformer
+    config:
+      remove:
+        headers:
+         - x-toremove
+        json:
+         - host
+         - http
+      add:
+        headers:
+         - h1:v2
+         - h2:v1
+        json:
+         - statusVal:approved
+         - code:200
+         - isSuccess:true
+        json_types:
+         - string
+         - number
+         - boolean
+      append:
+        headers:
+         - x-existing-header:append_existing_header
+         - x-another-header:append_another_header
+         - h1:test
